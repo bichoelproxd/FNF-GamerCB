@@ -46,8 +46,17 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Android SDK (ya viene en el runner, solo licencias y plataforma 34)
+        run: |
+          export ANDROID_HOME="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+          SDKM=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f 2>/dev/null | sort | tail -n 1)
+          echo "sdkmanager: ${SDKM:-no encontrado}"
+          if [ -n "$SDKM" ]; then
+            yes | "$SDKM" --sdk_root="$ANDROID_HOME" --licenses > /dev/null || true
+            "$SDKM" --sdk_root="$ANDROID_HOME" "platforms;android-34" "build-tools;34.0.0" || true
+          fi
 
       - name: Versión y etiqueta
         run: |
