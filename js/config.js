@@ -8,6 +8,19 @@
 
 const params = new URLSearchParams(location.search);
 
+/* ---------- Plataforma (v4.1.0) ----------
+   native: dentro del APK (Capacitor) · android: cualquier Android (APK o navegador) ·
+   standalone: abierto desde el icono de la pantalla de inicio (ya sin barras) ·
+   noFolderPicker: Android no deja elegir CARPETAS (webkitdirectory) → los mods se cargan como .zip */
+const Platform = (() => {
+  const ua = navigator.userAgent || '';
+  const native = !!(window.Capacitor && typeof Capacitor.isNativePlatform === 'function' && Capacitor.isNativePlatform());
+  const android = /Android/i.test(ua) || native;
+  let standalone = false;
+  try { standalone = !!(window.matchMedia && (matchMedia('(display-mode: fullscreen)').matches || matchMedia('(display-mode: standalone)').matches)) || navigator.standalone === true; } catch (e) {}
+  return { native, android, standalone, noFolderPicker: android };
+})();
+
 /* ---------- Valores del juego (FunkinCrew/Funkin: Constants.hx, Scoring.hx, PlayState.hx) ---------- */
 const FNF = {
   WIDTH: 1280, HEIGHT: 720,
@@ -119,7 +132,7 @@ const fillT = (t, v) => t.replace(/\{(\w+)\}/g, (m, k) => v[k] ?? m);
 const assetUrl = p => ROOT + p.split('/').map(encodeURIComponent).join('/');
 const uniq = a => [...new Set(a)];
 const hexRgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
-const VERSION = '4.0.0';
+const VERSION = '4.1.0';
 const cubeInOut = t => t < 0.5 ? 4 * t * t * t : 0.5 * Math.pow(2 * t - 2, 3) + 1;
 const formatMoney = n => { n = +n || 0; const neg = n < 0; return (neg ? '-' : '') + Math.floor(Math.abs(n)).toLocaleString('en-US'); };   // FlxStringUtil.formatMoney(x, false, true): ffloor del valor absoluto
 const $ = id => document.getElementById(id);

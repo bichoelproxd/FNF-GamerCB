@@ -39,6 +39,14 @@ const PRESET_KEYS = Object.keys(OPTIM_PRESETS.alta);
 const Optim = {
   s: Object.assign({}, OPTIM_DEF),
   load() {
+    // v4.1.0: primer arranque en un celular con poca RAM (≤ 2 GB): calidad Media / Baja de entrada (sin guardar;
+    // el modo bajo rendimiento sigue bajando solo si hace falta)
+    try {
+      if (localStorage.getItem(OPTIM_KEY) === null && navigator.deviceMemory && matchMedia('(pointer: coarse)').matches) {
+        const p = navigator.deviceMemory <= 1 ? 'baja' : navigator.deviceMemory <= 2 ? 'media' : null;
+        if (p) Object.assign(this.s, OPTIM_PRESETS[p], { preset: p });
+      }
+    } catch (e) {}
     try {
       const d = JSON.parse(localStorage.getItem(OPTIM_KEY) || '{}');
       for (const k of Object.keys(OPTIM_DEF)) if (d[k] !== undefined && typeof d[k] === typeof OPTIM_DEF[k]) this.s[k] = d[k];

@@ -281,32 +281,161 @@ const Chart = {
 };
 
 /* =====================================================================
-   ZIP mínimo (.fnfc de V-Slice es un zip) usando DecompressionStream
+   ZIP mínimo (.fnfc de V-Slice es un zip): ZIP64, lectura perezosa y inflate de respaldo (v4.1.0)
    ===================================================================== */
 const Zip = {
+  /* Lee un ArrayBuffer ya cargado en memoria. Devuelve [{ name, data() → ArrayBuffer }] (descompresión perezosa). */
   async read(buf) {
-    const dv = new DataView(buf), u8 = new Uint8Array(buf);
+    const u8 = new Uint8Array(buf);
+    return this._open({ size: u8.length, get: async (a, b) => u8.subarray(a, b) });
+  },
+  /* v4.1.0: lee un File/Blob SIN cargarlo entero en memoria (celulares con poca RAM): solo se leen
+     el directorio central y, al pedir cada entrada, sus bytes comprimidos (Blob.slice). */
+  async readFile(file) {
+    return this._open({ size: file.size, get: async (a, b) => new Uint8Array(await file.slice(a, b).arrayBuffer()) });
+  },
+  async _open(src) {
+    const dec = new TextDecoder();
+    const u16 = (dv, o) => dv.getUint16(o, true), u32 = (dv, o) => dv.getUint32(o, true);
+    const u64 = (dv, o) => dv.getUint32(o, true) + dv.getUint32(o + 4, true) * 4294967296;
+    const dvOf = u8 => new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+    // 1) fin del directorio central (EOCD) en los últimos ~64 KB (+ localizador ZIP64)
+    const tailStart = Math.max(0, src.size - 65557 - 20), tail = await src.get(tailStart, src.size), tdv = dvOf(tail);
     let eocd = -1;
-    for (let i = buf.byteLength - 22; i >= Math.max(0, buf.byteLength - 65557); i--) if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+    for (let i = tail.length - 22; i >= 0; i--) if (tdv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
     if (eocd < 0) throw new Error('No es un zip/.fnfc válido');
-    const count = dv.getUint16(eocd + 10, true); let p = dv.getUint32(eocd + 16, true);
-    const out = [], dec = new TextDecoder();
+    let count = u16(tdv, eocd + 10), cdSize = u32(tdv, eocd + 12), cdOff = u32(tdv, eocd + 16);
+    // ZIP64 (mods grandes: más de 65 535 archivos o más de 4 GB)
+    if ((count === 0xFFFF || cdSize === 0xFFFFFFFF || cdOff === 0xFFFFFFFF) && eocd >= 20 && tdv.getUint32(eocd - 20, true) === 0x07064b50) {
+      const z64 = u64(tdv, eocd - 20 + 8), h = await src.get(z64, z64 + 56), hdv = dvOf(h);
+      if (hdv.getUint32(0, true) === 0x06064b50) { count = u64(hdv, 32); cdSize = u64(hdv, 40); cdOff = u64(hdv, 48); }
+    }
+    // 2) directorio central
+    const cd = await src.get(cdOff, cdOff + cdSize), dv = dvOf(cd), out = [];
+    let p = 0;
     for (let k = 0; k < count; k++) {
-      if (dv.getUint32(p, true) !== 0x02014b50) break;
-      const method = dv.getUint16(p + 10, true), csize = dv.getUint32(p + 20, true);
-      const nlen = dv.getUint16(p + 28, true), elen = dv.getUint16(p + 30, true), clen = dv.getUint16(p + 32, true);
-      const local = dv.getUint32(p + 42, true), name = dec.decode(u8.subarray(p + 46, p + 46 + nlen));
+      if (p + 46 > cd.length || u32(dv, p) !== 0x02014b50) break;
+      const flags = u16(dv, p + 8), method = u16(dv, p + 10);
+      let csize = u32(dv, p + 20), usize = u32(dv, p + 24), local = u32(dv, p + 42);
+      const nlen = u16(dv, p + 28), elen = u16(dv, p + 30), clen = u16(dv, p + 32);
+      const name = dec.decode(cd.subarray(p + 46, p + 46 + nlen));
+      if (usize === 0xFFFFFFFF || csize === 0xFFFFFFFF || local === 0xFFFFFFFF) {          // campo extra ZIP64 (id 0x0001)
+        let e = p + 46 + nlen; const end = e + elen;
+        while (e + 4 <= end) {
+          const id = u16(dv, e), sz = u16(dv, e + 2); let q = e + 4;
+          if (id === 0x0001) {
+            if (usize === 0xFFFFFFFF) { usize = u64(dv, q); q += 8; }
+            if (csize === 0xFFFFFFFF) { csize = u64(dv, q); q += 8; }
+            if (local === 0xFFFFFFFF) { local = u64(dv, q); q += 8; }
+            break;
+          }
+          e += 4 + sz;
+        }
+      }
       p += 46 + nlen + elen + clen;
-      const start = local + 30 + dv.getUint16(local + 26, true) + dv.getUint16(local + 28, true);
-      const raw = u8.slice(start, start + csize);
-      out.push({ name, data: async () => {
-        if (method === 0) return raw.buffer;
-        if (method !== 8) throw new Error('Compresión zip no soportada');
-        if (typeof DecompressionStream === 'undefined') throw new Error('Tu navegador no puede descomprimir .fnfc');
-        return new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer();
+      out.push({ name, size: usize, data: async () => {
+        if (flags & 1) throw new Error('Zip con contraseña: no soportado');
+        const hd = await src.get(local, local + 30), hv = dvOf(hd);
+        if (u32(hv, 0) !== 0x04034b50) throw new Error('Zip dañado (cabecera local de ' + name + ')');
+        const start = local + 30 + u16(hv, 26) + u16(hv, 28);
+        const raw = await src.get(start, start + csize);
+        if (method === 0) return raw.byteOffset === 0 && raw.byteLength === raw.buffer.byteLength ? raw.buffer : raw.slice().buffer;
+        if (method !== 8) throw new Error('Compresión zip no soportada (método ' + method + ')');
+        return Zip.inflate(raw);
       } });
     }
     return out;
+  },
+  /* deflate crudo → ArrayBuffer. Usa DecompressionStream si el navegador la tiene; si no (WebView viejo de
+     Android 9 / Chrome < 103), usa un inflate propio de respaldo. */
+  async inflate(raw) {
+    if (typeof DecompressionStream !== 'undefined' && typeof Blob !== 'undefined' && Blob.prototype.stream) {
+      try { return await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer(); }
+      catch (e) { /* 'deflate-raw' no soportado en esta versión: se usa el inflate propio */ }
+    }
+    return Zip.inflateJS(raw);
+  },
+  /* inflate (RFC 1951) en JS puro, basado en el algoritmo de "puff" de Mark Adler. Solo de respaldo: más lento. */
+  inflateJS(src) {
+    const LB = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258];
+    const LE = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
+    const DB = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577];
+    const DE = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13];
+    const ORDER = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
+    let pos = 0, bb = 0, bc = 0, op = 0, out = new Uint8Array(Math.max(1024, src.length * 3));
+    const grow = n => { if (op + n > out.length) { const o = new Uint8Array(Math.max(out.length * 2, op + n)); o.set(out.subarray(0, op)); out = o; } };
+    const bits = n => {
+      while (bc < n) { if (pos >= src.length) throw new Error('inflate: datos truncados'); bb |= src[pos++] << bc; bc += 8; }
+      const v = bb & ((1 << n) - 1); bb >>>= n; bc -= n; return v;
+    };
+    const build = lens => {
+      const count = new Uint16Array(16), symbol = new Uint16Array(lens.length), offs = new Uint16Array(16);
+      for (let i = 0; i < lens.length; i++) count[lens[i]]++;
+      count[0] = 0;
+      for (let l = 1; l < 15; l++) offs[l + 1] = offs[l] + count[l];
+      for (let s = 0; s < lens.length; s++) if (lens[s]) symbol[offs[lens[s]]++] = s;
+      return { count, symbol };
+    };
+    const decode = h => {
+      let code = 0, first = 0, index = 0;
+      for (let len = 1; len <= 15; len++) {
+        code |= bits(1);
+        const c = h.count[len];
+        if (code - c < first) return h.symbol[index + (code - first)];
+        index += c; first += c; first <<= 1; code <<= 1;
+      }
+      throw new Error('inflate: código inválido');
+    };
+    let fixedL = null, fixedD = null, last;
+    do {
+      last = bits(1);
+      const type = bits(2);
+      if (type === 0) {                                   // bloque sin comprimir
+        bb = 0; bc = 0;
+        if (pos + 4 > src.length) throw new Error('inflate: datos truncados');
+        const len = src[pos] | (src[pos + 1] << 8); pos += 4;
+        if (pos + len > src.length) throw new Error('inflate: datos truncados');
+        grow(len); out.set(src.subarray(pos, pos + len), op); op += len; pos += len;
+        continue;
+      }
+      let lh, dh;
+      if (type === 1) {                                   // Huffman fijo
+        if (!fixedL) {
+          const l = new Uint8Array(288); l.fill(8, 0, 144); l.fill(9, 144, 256); l.fill(7, 256, 280); l.fill(8, 280, 288);
+          fixedL = build(l); fixedD = build(new Uint8Array(30).fill(5));
+        }
+        lh = fixedL; dh = fixedD;
+      } else if (type === 2) {                            // Huffman dinámico
+        const nl = bits(5) + 257, nd = bits(5) + 1, nc = bits(4) + 4, cl = new Uint8Array(19);
+        for (let i = 0; i < nc; i++) cl[ORDER[i]] = bits(3);
+        const ch = build(cl), lens = new Uint8Array(nl + nd);
+        for (let i = 0; i < nl + nd;) {
+          const sym = decode(ch);
+          if (sym < 16) lens[i++] = sym;
+          else {
+            let rep, val = 0;
+            if (sym === 16) { if (!i) throw new Error('inflate: repetición inválida'); val = lens[i - 1]; rep = 3 + bits(2); }
+            else if (sym === 17) rep = 3 + bits(3); else rep = 11 + bits(7);
+            if (i + rep > nl + nd) throw new Error('inflate: demasiadas longitudes');
+            while (rep--) lens[i++] = val;
+          }
+        }
+        lh = build(lens.subarray(0, nl)); dh = build(lens.subarray(nl));
+      } else throw new Error('inflate: tipo de bloque inválido');
+      for (;;) {
+        const sym = decode(lh);
+        if (sym < 256) { grow(1); out[op++] = sym; }
+        else if (sym === 256) break;
+        else {
+          const s = sym - 257; if (s >= 29) throw new Error('inflate: longitud inválida');
+          const len = LB[s] + bits(LE[s]), ds = decode(dh); if (ds >= 30) throw new Error('inflate: distancia inválida');
+          const dist = DB[ds] + bits(DE[ds]); if (dist > op) throw new Error('inflate: distancia fuera de rango');
+          grow(len);
+          for (let k = 0; k < len; k++) { out[op] = out[op - dist]; op++; }
+        }
+      }
+    } while (!last);
+    return out.slice(0, op).buffer;
   },
 };
 

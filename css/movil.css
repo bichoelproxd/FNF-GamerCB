@@ -104,3 +104,9 @@ body.movil .imp-eng { grid-template-columns: repeat(2, 1fr); }
 body.movil .btn.imp-song { min-height: 56px; }
 body.movil #timeBar { left: auto; right: max(14px, env(safe-area-inset-right)); width: 42vw; }
 @media (max-height: 420px) { body.movil .pitem { min-height: 46px; } body.movil .pitem span { font-size: 21px !important; } body.movil #ovTitle { display: none; } }
+
+/* ---------- Android (v4.1.0): APK y navegador ---------- */
+html, body { overscroll-behavior: none; }
+body.android { -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+body.android input, body.android select, body.android textarea { -webkit-user-select: text; user-select: text; }
+body.app-android #fsBtn { display: none; }

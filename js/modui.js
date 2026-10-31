@@ -105,6 +105,11 @@ const ModUI = {
 
   /* ---- carga de archivos ---- */
   pick(accept, multiple, dir) {
+    // v4.1.0: Android no deja elegir carpetas → se piden varios archivos (o un .zip del mod)
+    if (dir && Platform.noFolderPicker) {
+      dir = false; multiple = true;
+      if (!this._dirWarned) { this._dirWarned = true; toast('Android no deja elegir carpetas: elige varios archivos o el .zip del mod.', 6000); }
+    }
     return new Promise(ok => {
       const inp = document.createElement('input'); inp.type = 'file'; inp.accept = accept || ''; inp.multiple = !!multiple;
       if (dir) { inp.webkitdirectory = true; inp.setAttribute('webkitdirectory', ''); }

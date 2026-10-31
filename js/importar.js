@@ -18,6 +18,8 @@ const ENGINE_LAYOUT = {
   codename: { name: 'Codename Engine', hint: 'songs/<canción>/charts/<dif>.json + meta.json · songs/<canción>/song/Inst.ogg · data/characters/*.xml · data/stages/*.xml + .hx · images/ · shaders/' },
   kade: { name: 'Kade Engine', hint: 'data/<canción>/<canción>-<dif>.json · songs/<canción>/Inst.ogg, Voices.ogg · characters · images/' },
 };
+/* v4.1.0: el selector de Android a veces marca los .zip como application/octet-stream → se aceptan también */
+const ZIP_ACCEPT = '.zip,.fnfc,application/zip,application/x-zip-compressed,application/octet-stream';
 const DIFF_ORDER = ['easy', 'normal', 'hard', 'erect', 'nightmare'];
 const sortDiffs = ds => ds.slice().sort((a, b) => { const ia = DIFF_ORDER.indexOf(a), ib = DIFF_ORDER.indexOf(b); return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b); });
 /* carpetas de primer nivel de un mod (lo de antes es la carpeta raíz del mod / del zip) */
@@ -36,7 +38,7 @@ const SongImport = {
   fromFolder(files) { return files.map(f => ({ rel: this.relOf(f), name: f.name, blob: f })); },
   async fromZip(file) {
     const out = [];
-    for (const e of await Zip.read(await file.arrayBuffer())) {
+    for (const e of await Zip.readFile(file)) {   // v4.1.0: sin cargar el .zip entero en memoria
       if (e.name.endsWith('/')) continue;
       const name = e.name.split('/').pop(); if (!name || name.startsWith('.')) continue;
       out.push({ rel: e.name, name, blob: new Blob([await e.data()], { type: this.mime(name) }) });
@@ -44,7 +46,7 @@ const SongImport = {
     return out;
   },
   async pickMod(zip) {
-    const files = zip ? await ModUI.pick('.zip', false) : await ModUI.pick('', true, true);
+    const files = zip ? await ModUI.pick(ZIP_ACCEPT, false) : await ModUI.pick('', true, true);
     if (!files.length) return;
     this.busy = true; this.render();
     try {
@@ -208,7 +210,8 @@ const SongImport = {
     const esc = escHtml, h = [], m = this.mod, L = ENGINE_LAYOUT[this.sel];
     h.push(`<h4>Motor</h4><div class="imp-eng">${Object.entries(ENGINE_LAYOUT).map(([k, v]) => `<button class="btn mini ${k === this.sel ? 'sel' : 'alt'}" type="button" data-eng="${k}">${esc(v.name)}</button>`).join('')}</div>`);
     h.push(`<p class="hint">${esc(L.hint)}</p>`);
-    h.push(`<div class="imp-row"><button class="btn mini" type="button" data-imp="dir" ${this.busy ? 'disabled' : ''}>📁 Carpeta del mod</button><button class="btn mini alt" type="button" data-imp="zip" ${this.busy ? 'disabled' : ''}>🗜 .zip del mod</button>${this.sel === 'vslice' ? '<button class="btn mini alt" type="button" data-imp="gcd">📀 Chart GCD</button>' : ''}</div>`);
+    h.push(`<div class="imp-row">${Platform.noFolderPicker ? '' : `<button class="btn mini" type="button" data-imp="dir" ${this.busy ? 'disabled' : ''}>📁 Carpeta del mod</button>`}<button class="btn mini ${Platform.noFolderPicker ? '' : 'alt'}" type="button" data-imp="zip" ${this.busy ? 'disabled' : ''}>🗜 .zip del mod</button>${this.sel === 'vslice' ? '<button class="btn mini alt" type="button" data-imp="gcd">📀 Chart GCD</button>' : ''}</div>`);
+    if (Platform.noFolderPicker) h.push('<p class="hint">En Android el mod se carga desde su archivo <b>.zip</b> (el navegador de Android no permite elegir carpetas).</p>');
     if (this.busy) h.push('<div class="imp-st">⏳ Leyendo el mod…</div>');
     if (m) {
       const c = this.counts();

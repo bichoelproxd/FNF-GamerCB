@@ -1,0 +1,11 @@
+# Dependencias y proyecto Android: se generan en el workflow (.github/workflows/android-apk.yml)
+/node_modules/
+/www/
+/android/
+/dist/
+.gradle/
+
+# Claves de firma: NUNCA subirlas al repo (usa los Secrets de GitHub)
+*.keystore
+*.jks
+local.properties

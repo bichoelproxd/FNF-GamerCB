@@ -1,0 +1,14 @@
+{
+  "appId": "com.gamercb.fnf",
+  "appName": "FNF GamerCB",
+  "webDir": "www",
+  "backgroundColor": "#000000",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "backgroundColor": "#000000",
+    "allowMixedContent": false,
+    "webContentsDebuggingEnabled": false
+  }
+}

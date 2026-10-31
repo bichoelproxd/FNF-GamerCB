@@ -1,0 +1,19 @@
+{
+  "name": "fnf-gamercb",
+  "version": "4.1.0",
+  "private": true,
+  "description": "FNF GamerCB · Test Song — juego web de FNF (V-Slice, Psych, Codename, Kade) empaquetado como APK universal con Capacitor.",
+  "scripts": {
+    "web": "node scripts/prepare-web.mjs",
+    "android": "node scripts/prepare-web.mjs && cap sync android && node scripts/patch-android.mjs"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.2.0",
+    "@capacitor/app": "^6.0.0",
+    "@capacitor/core": "^6.2.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.2.0",
+    "esbuild": "^0.24.0"
+  }
+}
